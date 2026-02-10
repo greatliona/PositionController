@@ -6,11 +6,16 @@ def calculate_money_management(entry_price, initial_stop, total_shares, current_
                                target_stop_price=None, 
                                profit_amount_goal=0,
                                enable_add_on=False, 
-                               add_on_stop=None):
+                               add_on_stop=None,
+                               is_stock=False):
+    
+    # 定義單位乘數：股票需 * 1000 (1張=1000股)，權證或其他則 * 1
+    unit_multiplier = 1000 if is_stock else 1
     
     one_r_unit = abs(entry_price - initial_stop)
     current_profit_per_share = current_price - entry_price
-    total_current_profit = current_profit_per_share * total_shares
+    # 金額計算連動乘數
+    total_current_profit = current_profit_per_share * total_shares * unit_multiplier
     profit_pct = (current_profit_per_share / entry_price) * 100 if entry_price != 0 else 0
     profit_r_multiple = current_profit_per_share / one_r_unit if one_r_unit != 0 else 0
 
@@ -21,7 +26,7 @@ def calculate_money_management(entry_price, initial_stop, total_shares, current_
     
     sell_by_amount = 0
     if profit_amount_goal > 0 and current_profit_per_share > 0:
-        sell_by_amount = math.ceil((profit_amount_goal + (total_shares * one_r_unit)) / (current_profit_per_share + one_r_unit))
+        sell_by_amount = math.ceil((profit_amount_goal + (total_shares * one_r_unit * unit_multiplier)) / ((current_profit_per_share + one_r_unit) * unit_multiplier))
 
     final_sell = max(sell_basic, sell_by_amount)
     final_sell = min(final_sell, total_shares)
@@ -34,29 +39,29 @@ def calculate_money_management(entry_price, initial_stop, total_shares, current_
     final_p_if_add_stop = 0 
     
     if enable_add_on and add_on_stop is not None and add_on_stop > entry_price:
-        available_buffer = (total_shares * (add_on_stop - entry_price)) - profit_amount_goal
-        risk_per_add_on = current_price - add_on_stop
+        available_buffer = (total_shares * (add_on_stop - entry_price) * unit_multiplier) - profit_amount_goal
+        risk_per_add_on_amount = (current_price - add_on_stop) * unit_multiplier
         
-        if risk_per_add_on > 0 and available_buffer > 0:
-            theo_add_on = math.floor(available_buffer / risk_per_add_on)
+        if risk_per_add_on_amount > 0 and available_buffer > 0:
+            theo_add_on = math.floor(available_buffer / risk_per_add_on_amount)
             add_on_shares = min(theo_add_on, total_shares)
-            add_on_cost = add_on_shares * current_price 
+            add_on_cost = add_on_shares * current_price * unit_multiplier
             
-            loss_on_add_shares = add_on_shares * (current_price - add_on_stop)
-            final_p_if_add_stop = (total_shares * (add_on_stop - entry_price)) - loss_on_add_shares
+            loss_on_add_shares = add_on_shares * (current_price - add_on_stop) * unit_multiplier
+            final_p_if_add_stop = (total_shares * (add_on_stop - entry_price) * unit_multiplier) - loss_on_add_shares
 
     # --- 3. 鎖利分析與獲利明細 ---
-    already_earned = final_sell * (current_price - entry_price) 
-    potential_locked = remaining_shares * (target_stop_price - entry_price) if target_stop_price else 0
+    already_earned = final_sell * (current_price - entry_price) * unit_multiplier
+    potential_locked = remaining_shares * (target_stop_price - entry_price) * unit_multiplier if target_stop_price else 0
     locked_total = already_earned + potential_locked
 
-    no_sell_init = total_shares * (initial_stop - entry_price) 
-    no_sell_target = total_shares * (target_stop_price - entry_price) if target_stop_price else 0
+    no_sell_init = total_shares * (initial_stop - entry_price) * unit_multiplier
+    no_sell_target = total_shares * (target_stop_price - entry_price) * unit_multiplier if target_stop_price else 0
 
     crash_price = current_price * 0.8
-    risk_now = (current_price - crash_price) * total_shares
-    risk_after_sell = (current_price - crash_price) * remaining_shares
-    risk_after_add = (current_price - crash_price) * (total_shares + add_on_shares)
+    risk_now = (current_price - crash_price) * total_shares * unit_multiplier
+    risk_after_sell = (current_price - crash_price) * remaining_shares * unit_multiplier
+    risk_after_add = (current_price - crash_price) * (total_shares + add_on_shares) * unit_multiplier
     
     return {
         "one_r": one_r_unit, "sell": final_sell, "remain": remaining_shares,
@@ -72,8 +77,9 @@ def calculate_money_management(entry_price, initial_stop, total_shares, current_
 st.set_page_config(page_title="三階段防彈交易計算器", layout="centered")
 st.title("🛡️ 三階段交易策略計算器 C1.1.1")
 
-# 側邊欄輸入
+# 側邊欄
 st.sidebar.header("📥 基礎參數")
+is_stock = st.sidebar.checkbox("股票操作(*1000)", value=False)
 entry = st.sidebar.number_input("進場價格", value=680.0)
 stop = st.sidebar.number_input("原始停損", value=650.0)
 shares = st.sidebar.number_input("原始張數", value=350, step=1)
@@ -91,7 +97,7 @@ en_add = st.sidebar.checkbox("我要計算保本加碼")
 a_stop = st.sidebar.number_input("加碼單停損價", value=entry) if en_add else None
 
 if st.sidebar.button("立即計算"):
-    res = calculate_money_management(entry, stop, shares, current, t_stop, p_goal, en_add, a_stop)
+    res = calculate_money_management(entry, stop, shares, current, t_stop, p_goal, en_add, a_stop, is_stock)
     
     st.subheader("💰 目前帳面獲利概況")
     c1, c2, c3, c4 = st.columns(4)
@@ -122,7 +128,6 @@ if st.sidebar.button("立即計算"):
             st.caption(f"（實戰上限限制為原始部位 1:1，即最高 {shares} 張）")
             st.write(f"預估投入金額： :green[**${res['add_cost']:,.0f}**]")
             
-            # --- 強化防禦提示：寫清楚保留多少、多賺多少 ---
             final_p = res['final_p_if_add_stop']
             if en_amount:
                 surplus = final_p - p_goal
